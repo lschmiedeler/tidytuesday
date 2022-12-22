@@ -11,75 +11,170 @@ knitr::opts_chunk$set(echo = TRUE)
 
 </br>
 
+### Create Functions
 ```{r, warning = F, message = F}
 library(tidyverse)
 
+# create a function that plots a bar graph
+plot_bar_graph <- function(data, y_var, fill_var, title, x_lab, y_lab, fill_lab, color_1, color_2) {
+  ggplot(data, aes(x = reorder(country, -get(y_var)), y = get(y_var), fill = get(fill_var))) +
+  geom_bar(stat = "identity") + 
+  theme_minimal() +
+  scale_fill_manual(values = c(color_1, color_2)) +
+  labs(x = x_lab, y = y_lab, title = title, fill = fill_lab) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5),
+        legend.position = "top")
+}
+
+# create a function that plots a world map
+plot_world_map <- function(data, fill_var, title, low_color, high_color) {
+  data <- data %>% mutate(country = as.character(country)) %>%
+    mutate(country = case_when(country == "United States" ~ "USA",
+                               country == "England" ~ "UK",
+                               country == "China PR" ~ "China",
+                               country == "Republic of Ireland" ~ "Ireland",
+                               T ~ country)) %>%
+    arrange(country) %>%
+    mutate(country = factor(country))
+    
+  map_data("world") %>%
+    merge(data, by.x = "region", by.y = "country", all.x = T) %>%
+    arrange(group, order) %>%
+    ggplot(aes(x = long, y = lat, group = group, fill = get(fill_var))) + 
+    geom_polygon(color = "white", linewidth = 0.2) +
+    theme_minimal() +
+    scale_fill_gradient(low = low_color, high = high_color, na.value = "gray90") + 
+    labs(title = title) +
+    theme(axis.text = element_blank(), axis.title = element_blank(), panel.grid = element_blank(), legend.title = element_blank())
+}
+
+# create a function that combines the statistics for two countries
+combine_stats <- function(data, country_1, country_2) {
+  combined <- data %>% filter(country == country_1) %>% select(-country) +
+    data %>% filter(country == country_2) %>% select(-country)
+  combined$country <- country_1
+  rbind(data %>% filter(country != country_1, country != country_2), combined)
+}
+```
+
+```{r, warning = F, message = F}
+library(paletteer)
+
+# create a color palette
+pal <- paletteer_c("viridis::viridis", 10)
+```
+
+</br>
+
+
+### Load Data
+```{r}
+# load the data
 data <- readRDS("data.RData")
 
-matches <- data[[1]] %>% mutate(country = factor(country), city = factor(city), stage = factor(stage), home_team = factor(home_team), away_team = factor(away_team), outcome = factor(outcome), win_conditions = factor(win_conditions), winning_team = factor(winning_team), losing_team = factor(losing_team), month = factor(month), dayofweek = factor(dayofweek))
+# create a "matches" data frame
+# convert the necessary variables to factors
+matches <- data[[1]] %>% mutate(country = factor(country), city = factor(city), stage = factor(stage), home_team = factor(home_team), away_team = factor(away_team), outcome = factor(outcome), win_conditions = factor(win_conditions), winning_team = factor(winning_team), losing_team = factor(losing_team), month = factor(month), dayofweek = factor(dayofweek)) 
+# fix a spelling error
 matches$winning_team[matches$winning_team == "Portagul"] <- "Portugal"
 summary(matches)
 
-cups <- data[[2]] %>% mutate(host = factor(host), winner = factor(winner), second = factor(second), third = factor(third), fourth = factor(fourth))
+# create a "cups" data frame
+# convert the necessary variables to factors
+cups <- data[[2]] %>% mutate(host = factor(host), winner = factor(winner), second = factor(second), third = factor(third), fourth = factor(fourth)) 
 summary(cups)
 ```
 
 </br>
 
-```{r, warning = F, message = F}
-library(paletteer)
-
+### Analyze World Cup Wins
+```{r}
 total_cup_wins <- cups %>% group_by(winner) %>%
   summarize(total_cup_wins = n()) %>%
+  rename(country = winner)
+
+# combine the statistics for "Germany" and "West Germany"
+total_cup_wins <- combine_stats(total_cup_wins, "Germany", "West Germany") %>% 
   arrange(-total_cup_wins)
 
-pal <- paletteer_c("viridis::viridis", 3)
-
-ggplot(total_cup_wins, aes(x = reorder(winner, -total_cup_wins), y = total_cup_wins)) +
-  geom_bar(stat = "identity", fill = pal[2]) + 
+ggplot(total_cup_wins, aes(x = reorder(country, -total_cup_wins), y = total_cup_wins)) +
+  geom_bar(stat = "identity", fill = pal[7]) + 
   theme_minimal() +
   labs(x = "Country", y = "World Cup Wins", title = "World Cup Wins by Country") +
   theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
 ```
 
 ```{r, fig.width = 9}
-map_data("world") %>%
-  merge(total_cup_wins, by.x = "region", by.y = "winner", all.x = T) %>%
-  arrange(group, order) %>%
-  ggplot(aes(x = long, y = lat, group = group, fill = total_cup_wins)) + 
-  geom_polygon(color = "white", size = 0.2) +
-  scale_fill_gradient(low = pal[3], high = pal[2], na.value = "gray90") + 
-  theme_minimal() +
-  theme(axis.text = element_blank(), axis.title = element_blank(), panel.grid = element_blank(), legend.title = element_blank())
+plot_world_map(total_cup_wins, "total_cup_wins", "World Cup Wins by Country", pal[6], pal[1])
 ```
 
 </br>
 
-```{r, fig.width = 10}
+### Analyze Match Wins
+```{r}
 total_match_wins <- matches %>% group_by(winning_team) %>% 
   summarize(total_match_wins = n()) %>%
   na.omit() %>%
-  arrange(-total_match_wins) %>%
-  mutate(won_world_cup = ifelse(winning_team %in% total_cup_wins$winner, "Yes", "No"))
-total_match_wins$won_world_cup <- factor(total_match_wins$won_world_cup, levels = c("Yes", "No"))
+  mutate(won_world_cup = ifelse(winning_team %in% total_cup_wins$country, 1, 0)) %>%
+  rename(country = winning_team)
 
-ggplot(total_match_wins, aes(x = reorder(winning_team, -total_match_wins), y = total_match_wins, fill = won_world_cup)) +
-  geom_bar(stat = "identity") + 
-  theme_minimal() +
-  labs(x = "Country", y = "Match Wins", title = "Match Wins by Country", fill = "Won World Cup") +
-  scale_fill_manual(values = c(pal[2], pal[1])) +
-  theme(axis.text.x = element_text(angle = 90, hjust = 1,vjust = 0.5),
-        legend.position = "top")
+# combine the statistics for "Germany" and "West Germany"
+total_match_wins <- combine_stats(total_match_wins, "Germany", "West Germany")
+
+# combine the statistics for "Russia" and "Soviet Union"
+total_match_wins <- combine_stats(total_match_wins, "Russia", "Soviet Union") %>%
+  arrange(country)
+
+total_match_wins <- total_match_wins %>% mutate(won_world_cup = ifelse(won_world_cup == 1, "Yes", "No"))
+total_match_wins$won_world_cup <- factor(total_match_wins$won_world_cup, levels = c("Yes", "No"))
+```
+
+```{r, fig.width = 10}
+plot_bar_graph(total_match_wins, "total_match_wins", "won_world_cup", "Match Wins by Country", "Country", "Match Wins", "Won World Cup", pal[7], pal[3])
 ```
 
 ```{r, fig.width = 9}
-map_data("world") %>%
-  merge(total_match_wins, by.x = "region", by.y = "winning_team", all.x = T) %>%
-  arrange(group, order) %>%
-  ggplot(aes(x = long, y = lat, group = group, fill = total_match_wins)) + 
-  geom_polygon(color = "white", size = 0.2) +
-  scale_fill_gradient(low = pal[2], high = pal[1], na.value = "gray90") + 
-  theme_minimal() +
-  theme(axis.text = element_blank(), axis.title = element_blank(), panel.grid = element_blank(), legend.title = element_blank())
+plot_world_map(total_match_wins, "total_match_wins", "Match Wins by Country", pal[6], pal[1])
+```
+
+</br>
+
+### Analyze Goals Per Game
+```{r}
+home_goals <- matches %>% group_by(home_team) %>%
+  summarize(total_goals_home = sum(home_score), total_games_home = n()) %>%
+  mutate(team = home_team) %>%
+  select(team, total_goals_home, total_games_home)
+
+away_goals <- matches %>% group_by(away_team) %>%
+  summarize(total_goals_away = sum(away_score), total_games_away = n()) %>%
+  mutate(team = away_team) %>%
+  select(team, total_goals_away, total_games_away)
+
+goals <- merge(home_goals, away_goals) %>%
+  mutate(total_goals = total_goals_home + total_goals_away,
+         total_games = total_games_home + total_games_away) %>%
+  select(team, total_goals, total_games) %>%
+  mutate(goals_per_game = total_goals / total_games,
+         won_world_cup = ifelse(team %in% total_cup_wins$country, 1, 0)) %>%
+  rename(country = team)
+
+# combine the statistics for "Germany" and "West Germany"
+goals <- combine_stats(goals, "Germany", "West Germany")
+
+# combine the statistics for "Russia" and "Soviet Union"
+goals <- combine_stats(goals, "Russia", "Soviet Union") %>%
+  arrange(-goals_per_game)
+
+goals <- goals %>% mutate(won_world_cup = ifelse(won_world_cup == 1, "Yes", "No"))
+goals$won_world_cup <- factor(goals$won_world_cup, levels = c("Yes", "No"))
+```
+
+```{r, fig.width = 10}
+plot_bar_graph(goals, "goals_per_game", "won_world_cup", "Goals Per Game by Country", "Country", "Goals Per Game", "Won World Cup", pal[7], pal[3])
+```
+
+```{r, fig.width = 9}
+plot_world_map(goals, "goals_per_game", "Goals Per Game by Country", pal[6], pal[1])
 ```
 
